@@ -1,10 +1,8 @@
-require "opentok/constants"
 require "opentok/exceptions"
 require "opentok/extensions/hash"
 
 require "active_support/inflector"
 require "httparty"
-require "jwt"
 
 module OpenTok
   # @private For internal use by the SDK.
@@ -19,34 +17,15 @@ module OpenTok
     def initialize(api_key, api_secret, api_url, ua_addendum="")
       self.class.base_uri api_url
       self.class.headers({
+        "X-TB-PARTNER-AUTH" => "#{api_key}:#{api_secret}",
         "User-Agent" => "OpenTok-Ruby-SDK/#{VERSION}" + (ua_addendum ? " #{ua_addendum}" : "")
       })
       @api_key = api_key
-      @api_secret = api_secret
-    end
-
-    def generate_jwt(api_key, api_secret)
-      now = Time.now.to_i
-      payload = {
-        :iss => api_key,
-        :iat => now,
-        :exp => now + AUTH_EXPIRE
-      }
-      token = JWT.encode payload, api_secret, 'HS256', :ist => 'project'
-      token
-    end
-
-    def generate_headers(extra_headers = {})
-      defaults = { "X-OPENTOK-AUTH" => generate_jwt(@api_key, @api_secret) }
-      defaults.merge extra_headers
     end
 
     def create_session(opts)
       opts.extend(HashExtensions)
-      response = self.class.post("/session/create", {
-        :body => opts.camelize_keys!,
-        :headers => generate_headers
-      })
+      response = self.class.post("/session/create", :body => opts.camelize_keys!)
       case response.code
       when (200..300)
         response
@@ -64,7 +43,7 @@ module OpenTok
       body = { "sessionId" => session_id }.merge(opts.camelize_keys!)
       response = self.class.post("/v2/project/#{@api_key}/archive", {
         :body => body.to_json,
-        :headers => generate_headers("Content-Type" => "application/json")
+        :headers => { "Content-Type" => "application/json" }
       })
       case response.code
       when 200
@@ -85,9 +64,7 @@ module OpenTok
     end
 
     def get_archive(archive_id)
-      response = self.class.get("/v2/project/#{@api_key}/archive/#{archive_id}", {
-        :headers => generate_headers
-      })
+      response = self.class.get("/v2/project/#{@api_key}/archive/#{archive_id}")
       case response.code
       when 200
         response
@@ -102,14 +79,12 @@ module OpenTok
       raise OpenTokError, "Failed to connect to OpenTok. Response code: #{e.message}"
     end
 
-    def list_archives(offset, count, sessionId)
+    def list_archives(offset, count)
       query = Hash.new
       query[:offset] = offset unless offset.nil?
       query[:count] = count unless count.nil?
-      query[:sessionId] = sessionId unless sessionId.nil?
       response = self.class.get("/v2/project/#{@api_key}/archive", {
-        :query => query.empty? ? nil : query,
-        :headers => generate_headers
+        :query => query.empty? ? nil : query
       })
       case response.code
       when 200
@@ -125,7 +100,7 @@ module OpenTok
 
     def stop_archive(archive_id)
       response = self.class.post("/v2/project/#{@api_key}/archive/#{archive_id}/stop", {
-        :headers => generate_headers("Content-Type" => "application/json")
+        :headers => { "Content-Type" => "application/json" }
       })
       case response.code
       when 200
@@ -147,7 +122,7 @@ module OpenTok
 
     def delete_archive(archive_id)
       response = self.class.delete("/v2/project/#{@api_key}/archive/#{archive_id}", {
-        :headers => generate_headers("Content-Type" => "application/json")
+        :headers => { "Content-Type" => "application/json" }
       })
       case response.code
       when 204
@@ -158,6 +133,31 @@ module OpenTok
         raise OpenTokArchiveError, "The archive could not be deleted. The status must be 'available', 'deleted', or 'uploaded'. Archive ID: #{archive_id}"
       else
         raise OpenTokArchiveError, "The archive could not be deleted."
+      end
+    rescue StandardError => e
+      raise OpenTokError, "Failed to connect to OpenTok. Response code: #{e.message}"
+    end
+
+    def dial(session_id, token, sip_uri, opts)
+      opts.extend(HashExtensions)
+      body = { "sessionId" => session_id,
+               "token" => token,
+               "sip" => { "uri" => sip_uri }.merge(opts.camelize_keys!)
+      }
+
+      response = self.class.post("/v2/project/#{@api_key}/dial", {
+        :body => body.to_json,
+        :headers => { "Content-Type" => "application/json" }
+      })
+      case response.code
+      when 200
+        response
+      when 403
+        raise OpenTokAuthenticationError, "Authentication failed while dialing a sip session. API Key: #{@api_key}"
+      when 404
+        raise OpenTokSipError, "The sip session could not be dialed. The Session ID does not exist: #{session_id}"
+      else
+        raise OpenTokSipError, "The sip session could not be dialed"
       end
     rescue StandardError => e
       raise OpenTokError, "Failed to connect to OpenTok. Response code: #{e.message}"
