@@ -6,5 +6,7 @@ module OpenTok
   class OpenTokArchiveError < OpenTokError; end
   # Defines errors raised when you attempt an operation using an invalid OpenTok API key or secret.
   class OpenTokAuthenticationError < OpenTokError; end
+  # Defines errors raised by SIP methods of the OpenTok Ruby SDK.
+  class OpenTokSipError < OpenTokError; end
 
 end
